@@ -24,11 +24,14 @@ import trimesh
 import time
 
 from vggt.models.vggt import VGGT
-from vggt.utils.load_fn import load_and_preprocess_images_downscale
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 from vggt.utils.helper import create_pixel_coordinate_grid, randomly_limit_trues
-from vggt.utils.eval_utils import load_images_rgb, get_vgg_input_imgs
+from vggt.utils.eval_utils import (
+    load_images_rgb,
+    get_vgg_input_imgs,
+    compute_original_coords,
+)
 
 
 def _build_pycolmap_intri(fidx, intrinsics, camera_type, extra_params=None):
@@ -177,8 +180,8 @@ def run_vggt(model, vgg_input, dtype, image_paths=None):
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     start = time.time()
-    with torch.no_grad():        
-        with torch.amp.autocast('cuda', dtype=dtype):
+    with torch.no_grad():
+        with torch.amp.autocast("cuda", dtype=dtype):
             vgg_input_cuda = vgg_input.cuda().to(torch.bfloat16)
 
             predictions = model(vgg_input_cuda, image_paths=image_paths)
@@ -187,7 +190,9 @@ def run_vggt(model, vgg_input, dtype, image_paths=None):
     end = time.time()
     inference_time_ms = (end - start) * 1000.0
 
-    print(f"VGGT inference time: {inference_time_ms:.1f} ms for {vgg_input.shape[0]} images")
+    print(
+        f"VGGT inference time: {inference_time_ms:.1f} ms for {vgg_input.shape[0]} images"
+    )
     # Measure max GPU VRAM usage
     if torch.cuda.is_available():
         max_mem_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
@@ -249,12 +254,6 @@ def parse_args():
         help="Max number of 3D points to keep when exporting",
     )
     parser.add_argument(
-        "--img_load_resolution",
-        type=int,
-        default=1024,
-        help="Image loading resolution (VGGT runs at 518 internally)",
-    )
-    parser.add_argument(
         "--save_images",
         action="store_true",
         help="Save the output images",
@@ -296,15 +295,11 @@ def main():
     model = model.to(torch.bfloat16)
     print("✅ Model loaded")
 
-    # Load and preprocess images (square pad+resize to img_load_resolution)
-    vggt_fixed_resolution_width = 518
-    vggt_fixed_resolution_height = 294
-
-    images, original_coords = load_and_preprocess_images_downscale(
-        image_path_list, new_width=vggt_fixed_resolution_width, new_height=vggt_fixed_resolution_height
-    )
-    original_coords = original_coords.to(device)
-     # Load images
+    # Load and preprocess images
+    original_coords = compute_original_coords(
+        image_path_list,
+    ).to(device)
+    # Load images
     print(f"🔄 Loading images...")
     images = load_images_rgb(image_path_list)
 
@@ -326,10 +321,11 @@ def main():
     # Back-project depth to 3D (camera/world coords as defined by util func)
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
 
-    # Colors (resize to 518 to match depth/points map grid)
+    # Colors (resize to match depth/points map grid from vgg_input shape)
+    _, _, grid_h, grid_w = vgg_input.shape
     points_rgb = F.interpolate(
         vgg_input,
-        size=(vggt_fixed_resolution_height, vggt_fixed_resolution_width),
+        size=(grid_h, grid_w),
         mode="bilinear",
         align_corners=False,
     )
@@ -350,7 +346,7 @@ def main():
 
     # Build pycolmap reconstruction
     print("🧩 Converting to COLMAP format...")
-    image_size = np.array([vggt_fixed_resolution_width, vggt_fixed_resolution_height])
+    image_size = np.array([grid_w, grid_h])
     camera_type = "PINHOLE"  # feedforward mode supports PINHOLE here
     reconstruction = batch_np_matrix_to_pycolmap_wo_track(
         points_3d,
@@ -367,7 +363,7 @@ def main():
         reconstruction,
         base_image_path_list,
         original_coords.detach().cpu().numpy(),
-        img_size=vggt_fixed_resolution_width,
+        img_size=grid_w,
         shift_point2d_to_original_res=True,
         shared_camera=False,
     )

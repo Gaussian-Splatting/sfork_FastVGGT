@@ -401,32 +401,21 @@ def get_vgg_input_imgs(images: np.ndarray):
     for image in images:
         img = Image.fromarray(image, mode="RGB")
         width, height = img.size
-        # Resize by fixing width to 518, maintain aspect ratio
-        target_width = 518
-        new_height_float = height * (target_width / width)
-        # Round height to nearest multiple of 14 for model compatibility
-        new_height = max(14, int(round(new_height_float / 14) * 14))
-        img = img.resize((target_width, new_height), Image.Resampling.BICUBIC)
+        # Resize image, maintain aspect ratio, ensure height is multiple of 14
+        new_width = 518
+        new_height = round(height * (new_width / width) / 14) * 14
+        img = img.resize((new_width, new_height), Image.Resampling.BICUBIC)
         img = to_tensor(img)  # Convert to tensor (0, 1)
 
-        # Crop or pad height to exactly 518
+        # If height exceeds 518, perform center cropping
         if new_height > 518:
             start_y = (new_height - 518) // 2
             img = img[:, start_y : start_y + 518, :]
             final_height = 518
-        elif new_height < 518:
-            pad_total = 518 - new_height
-            pad_top = pad_total // 2
-            pad_bottom = pad_total - pad_top
-            # Pad with white (value=1.0) to match earlier conventions
-            img = torch.nn.functional.pad(
-                img, (0, 0, pad_top, pad_bottom), mode="constant", value=1.0
-            )
-            final_height = 518
         else:
-            final_height = 518
+            final_height = new_height
 
-        final_width = target_width
+        final_width = new_width
         vgg_input_images.append(img)
 
     vgg_input_images = torch.stack(vgg_input_images)

@@ -590,6 +590,56 @@ def load_images_rgb(image_paths: List[Path]) -> List[np.ndarray]:
     return images
 
 
+def compute_original_coords(
+    image_path_list,
+    new_width=518,
+):
+    """
+    Compute only original_coords to map predictions made on a fixed-resolution
+    canvas (e.g., 518x294) back to the original image coordinates.
+
+    This mirrors the coordinate logic of load_and_preprocess_images_downscale
+    without constructing/resizing any images to avoid redundant work. Use this
+    when the caller prepares model inputs separately via get_vgg_input_imgs.
+
+    Args:
+        image_path_list (list): List of image file paths.
+        new_width (int): Target canvas width (drives scale = new_width / max_dim).
+        new_height (int): Target canvas height (kept for API parity; unused here).
+
+    Returns:
+        torch.Tensor: Float tensor of shape (N, 6), each row is
+            [x1, y1, x2, y2, width, height].
+    """
+    if len(image_path_list) == 0:
+        raise ValueError("At least 1 image is required")
+
+    original_coords = []
+    for image_path in image_path_list:
+        img = Image.open(image_path)
+        img = img.convert("RGB")
+
+        width, height = img.size
+        max_dim = max(width, height)
+
+        left = (max_dim - width) // 2
+        top = (max_dim - height) // 2
+
+        scale = new_width / max_dim
+
+        x1 = left * scale
+        y1 = top * scale
+        x2 = (left + width) * scale
+        y2 = (top + height) * scale
+
+        original_coords.append(
+            np.array([x1, y1, x2, y2, width, height], dtype=np.float32)
+        )
+
+    original_coords = torch.from_numpy(np.stack(original_coords, axis=0)).float()
+    return original_coords
+
+
 @torch.no_grad()
 def infer_vggt_and_reconstruct(
     model: torch.nn.Module,

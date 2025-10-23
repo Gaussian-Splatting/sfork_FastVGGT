@@ -95,7 +95,10 @@ def load_and_preprocess_images_square(image_path_list, target_size=1024):
 
     return images, original_coords
 
-def load_and_preprocess_images_downscale(image_path_list, new_width=518, new_height=294):
+
+def load_and_preprocess_images_downscale(
+    image_path_list, new_width=518, new_height=294
+):
     """
     Load and preprocess images by center padding to new dimensions and resizing to target size.
     Also returns the position information of original pixels after transformation.
@@ -180,6 +183,7 @@ def load_and_preprocess_images_downscale(image_path_list, new_width=518, new_hei
             original_coords = original_coords.unsqueeze(0)
 
     return images, original_coords
+
 
 def load_and_preprocess_images(image_path_list, mode="crop"):
     """
